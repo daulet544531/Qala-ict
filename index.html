@@ -269,6 +269,7 @@ h1{letter-spacing:-.3px}
 .mk.evonly{width:20px;height:20px;margin:3px;border-width:2px;border-radius:50%;display:grid;place-items:center}
 .mk.evonly .ev{position:static;min-width:0;height:auto;background:none;box-shadow:none;font-size:11px;padding:0;border-radius:0;line-height:1}
 .cm span{border-radius:99px;padding:0 6px}
+.cf{min-height:65px;display:flex;justify-content:center;margin:4px 0}
 </style>
 </head>
 <body>
@@ -281,6 +282,7 @@ h1{letter-spacing:-.3px}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 <script>
 const COL={Music:'#8B3A68',Tech:'#245E9E',Sport:'#28744C',Art:'#94550F',Business:'#46505E',Food:'#B0481A'};
 const CAT={Music:['Музыка'],Tech:['Технологии'],Sport:['Спорт'],Art:['Искусство'],Business:['Бизнес'],Food:['Еда']};
@@ -378,6 +380,13 @@ let sb=null;try{if(SB_URL&&SB_KEY&&window.supabase)sb=window.supabase.createClie
 const CLOUD=!!sb;
 let UID=null,PNAME='',MYLOC='',LASTDAY='',FSIG='',POLL=null,LOADING=false,AUTHR=false;
 const AUTH={mode:'in',msg:'',busy:false};
+let RECOV=false;
+if(/error_code=otp_expired|error=access_denied/.test(location.hash)){AUTH.mode='reset';AUTH.msg='Ссылка недействительна или устарела. Запросите новую.'}
+const TS_KEY='0x4AAAAAAF8vPrfkg3RPqnnw';let TSID=null,TSTOKEN='';
+function renderTs(n){n=n||0;const el=document.getElementById('cf');if(!el||el.dataset.ts)return;
+if(!window.turnstile){if(n<50)setTimeout(()=>renderTs(n+1),200);return}
+el.dataset.ts='1';try{TSID=window.turnstile.render(el,{sitekey:TS_KEY,theme:'auto',callback:t=>{TSTOKEN=t},'expired-callback':()=>{TSTOKEN=''},'error-callback':()=>{TSTOKEN=''}})}catch(e){}}
+function rmTs(){try{if(TSID!==null&&window.turnstile)window.turnstile.remove(TSID)}catch(e){}TSID=null;TSTOKEN=''}
 /* адрес, на который Supabase вернёт человека после подтверждения почты: страница, где он зарегистрировался (с папкой репозитория, без #… и ?…) */
 const backUrl=()=>location.href.split('#')[0].split('?')[0].replace(/index\.html$/,'');
 S.inc=[];S.out=[];
@@ -388,23 +397,61 @@ if(!CLOUD)try{localStorage.setItem('qala_name',v)}catch(e){}
 if(S.role=='Житель'&&S.home)S.city=S.home;persistHome();S.ready=true;S.tab='map';saveProf();ob();R();goCity()}
 const ini=n=>([...String(n).trim()][0]||'?').toUpperCase();
 const inits=n=>String(n).trim().split(/\s+/).slice(0,2).map(ini).join('');
-const errRu=e=>{const m=String(e&&e.message||e);return /Invalid login/i.test(m)?'Неверная почта или пароль':/already registered/i.test(m)?'Эта почта уже зарегистрирована':/Password should|weak/i.test(m)?'Пароль слишком простой, нужно минимум 8 символов':/rate limit|too many/i.test(m)?'Слишком много попыток, подождите немного':/not confirmed/i.test(m)?'Подтвердите почту по ссылке из письма':'Не удалось выполнить. Попробуйте ещё раз'};
-function au(){const a=$('#au');if(!CLOUD||UID){a.style.display='none';return}
+const errRu=e=>{const m=String(e&&e.message||e);return /different from the old/i.test(m)?'Новый пароль должен отличаться от старого':/Invalid login/i.test(m)?'Неверная почта или пароль':/already registered/i.test(m)?'Эта почта уже зарегистрирована':/Password should|weak/i.test(m)?'Пароль слишком простой: минимум 8 символов, буквы и цифры':/captcha/i.test(m)?'Проверка не пройдена, попробуйте ещё раз':/rate limit|too many/i.test(m)?'Слишком много попыток, подождите немного':/not confirmed/i.test(m)?'Подтвердите почту по ссылке из письма':'Не удалось выполнить. Попробуйте ещё раз'};
+function au(){const a=$('#au');if(!CLOUD||(UID&&!RECOV)){a.style.display='none';return}
 if(!AUTHR){a.style.display='grid';a.innerHTML='<p class="mut">Загрузка…</p>';return}
-const up=AUTH.mode=='up';a.style.display='grid';
+const old=document.getElementById('ae'),em0=old?old.value:'';
+rmTs();const m=RECOV?'new':AUTH.mode,up=m=='up';a.style.display='grid';
+const err=`<div class="perr" role="alert">${esc(AUTH.msg)}</div>`;
+if(m=='new'){a.innerHTML=`<form class="obc" onsubmit="newPwGo(event)"><div class="logo">Qala</div><h1>Новый пароль</h1>
+<p class="mut">Придумайте новый пароль: от 8 символов, буквы и цифры.</p>
+<label class="fld">Новый пароль<input class="search" id="np" type="password" minlength="8" autocomplete="new-password" required></label>
+<label class="fld">Повторите пароль<input class="search" id="np2" type="password" minlength="8" autocomplete="new-password" required></label>
+${err}<button class="btn" ${AUTH.busy?'disabled':''}>Сохранить пароль</button></form>`;return}
+if(m=='reset'){a.innerHTML=`<form class="obc" onsubmit="resetGo(event)"><div class="logo">Qala</div><h1>Сброс пароля</h1>
+<p class="mut">Укажите почту, с которой вы регистрировались. Мы отправим ссылку для смены пароля.</p>
+<label class="fld">Почта<input class="search" id="ae" type="email" autocomplete="email" required></label>
+<div id="cf" class="cf"></div>
+${err}<button class="btn" ${AUTH.busy?'disabled':''}>Отправить ссылку</button>
+<button type="button" class="btn ghost" onclick="AUTH.mode='in';AUTH.msg='';au()">Назад ко входу</button></form>`;
+const f=document.getElementById('ae');if(f&&em0)f.value=em0;renderTs();return}
 a.innerHTML=`<form class="obc" onsubmit="authGo(event)"><div class="logo">Qala</div><h1>${up?'Регистрация':'Вход'}</h1>
 <p class="mut">После регистрации у вас появится личный 8-значный ID. По нему друзья смогут вас добавить.</p>
 ${up?'<label class="fld">Имя<input class="search" id="an" maxlength="30" autocomplete="off" required></label>':''}
 <label class="fld">Почта<input class="search" id="ae" type="email" autocomplete="email" required></label>
 <label class="fld">Пароль, от 8 символов<input class="search" id="ap" type="password" minlength="8" autocomplete="${up?'new-password':'current-password'}" required></label>
-<div class="perr" role="alert">${esc(AUTH.msg)}</div>
+${up?'':`<button type="button" class="btn sm ghost" onclick="AUTH.mode='reset';AUTH.msg='';au()">Забыли пароль?</button>`}
+<div id="cf" class="cf"></div>
+${err}
 <button class="btn" ${AUTH.busy?'disabled':''}>${up?'Создать аккаунт':'Войти'}</button>
-<button type="button" class="btn ghost" onclick="AUTH.mode='${up?'in':'up'}';AUTH.msg='';au()">${up?'У меня уже есть аккаунт':'Создать аккаунт'}</button></form>`}
+<button type="button" class="btn ghost" onclick="AUTH.mode='${up?'in':'up'}';AUTH.msg='';au()">${up?'У меня уже есть аккаунт':'Создать аккаунт'}</button></form>`;
+const f=document.getElementById('ae');if(f&&em0)f.value=em0;renderTs()}
+async function resetGo(ev){ev.preventDefault();if(AUTH.busy)return;
+const em=$('#ae').value.trim();
+if(!TSTOKEN){const pe=document.querySelector('#au .perr');if(pe)pe.textContent='Подтвердите, что вы не робот';return}
+const tok=TSTOKEN;TSTOKEN='';AUTH.busy=true;AUTH.msg='';
+try{const{error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:backUrl(),captchaToken:tok});if(error)throw error;
+AUTH.mode='in';AUTH.msg='Если эта почта зарегистрирована, мы отправили письмо со ссылкой для смены пароля.'}
+catch(e){AUTH.msg=errRu(e)}
+AUTH.busy=false;au();const f=$('#ae');if(f)f.value=em}
+async function newPwGo(ev){ev.preventDefault();if(AUTH.busy)return;
+const p1=$('#np').value,p2=$('#np2').value,pe=document.querySelector('#au .perr');
+if(p1!==p2){if(pe)pe.textContent='Пароли не совпадают';return}
+AUTH.busy=true;AUTH.msg='';
+try{const{error}=await sb.auth.updateUser({password:p1});if(error)throw error;
+RECOV=false;AUTH.mode='in';try{history.replaceState(null,'',backUrl())}catch(e){}
+toast('Пароль изменён');
+const{data}=await sb.auth.getSession(),u=data&&data.session&&data.session.user;
+AUTH.busy=false;if(u&&UID!==u.id&&!LOADING)loadAll(u);else au();return}
+catch(e){AUTH.msg=errRu(e)}
+AUTH.busy=false;au()}
 async function authGo(ev){ev.preventDefault();if(AUTH.busy)return;
-const em=$('#ae').value.trim(),pw=$('#ap').value,nm=$('#an')?$('#an').value.trim():'';AUTH.busy=true;AUTH.msg='';let ok=false;
-try{if(AUTH.mode=='up'){const{data,error}=await sb.auth.signUp({email:em,password:pw,options:{data:{name:nm},emailRedirectTo:backUrl()}});if(error)throw error;
+const em=$('#ae').value.trim(),pw=$('#ap').value,nm=$('#an')?$('#an').value.trim():'';
+if(!TSTOKEN){const pe=document.querySelector('#au .perr');if(pe)pe.textContent='Подтвердите, что вы не робот';return}
+const tok=TSTOKEN;TSTOKEN='';AUTH.busy=true;AUTH.msg='';let ok=false;
+try{if(AUTH.mode=='up'){const{data,error}=await sb.auth.signUp({email:em,password:pw,options:{data:{name:nm},emailRedirectTo:backUrl(),captchaToken:tok}});if(error)throw error;
 if(data.session)ok=true;else{AUTH.mode='in';AUTH.msg='Мы отправили письмо. Подтвердите почту и войдите.'}}
-else{const{error}=await sb.auth.signInWithPassword({email:em,password:pw});if(error)throw error;ok=true}}
+else{const{error}=await sb.auth.signInWithPassword({email:em,password:pw,options:{captchaToken:tok}});if(error)throw error;ok=true}}
 catch(e){AUTH.msg=errRu(e)}
 AUTH.busy=false;if(ok)return;au();const f=$('#ae');if(f)f.value=em}
 function outAll(){UID=null;clearInterval(POLL);Object.assign(S,{home:'',city:'astana',nm:null,ready:false,fav:[],tk:[],fr:[],sg:[],inc:[],out:[],day:{},att:0,sel:null,tab:'map'});P.res=null;LASTDAY='';FSIG='';MYLOC='';R();ob();au()}
@@ -426,7 +473,7 @@ au();ob();R()}
 catch(e){toast('Не удалось загрузить данные. Войдите ещё раз');sb.auth.signOut()}
 finally{LOADING=false}}
 function initCloud(){if(!CLOUD){if(SB_URL&&SB_KEY)toast('Supabase не загрузился, включён демо-режим');return}
-sb.auth.onAuthStateChange((ev,ses)=>{setTimeout(()=>{AUTHR=true;if(ses&&ses.user){if(UID!==ses.user.id&&!LOADING)loadAll(ses.user)}else outAll()},0)})}
+sb.auth.onAuthStateChange((ev,ses)=>{if(ev=='PASSWORD_RECOVERY')RECOV=true;setTimeout(()=>{AUTHR=true;if(ses&&ses.user){if(RECOV){if(!document.getElementById('np'))au();return}if(UID!==ses.user.id&&!LOADING)loadAll(ses.user)}else{RECOV=false;outAll()}},0)})}
 function saveProf(){if(!CLOUD||!UID)return;const base={name:PNAME,role:S.role,interests:[...S.ints]},city=S.role=='Житель'&&S.home?S.home:null;
 sb.from('profiles').update({...base,city}).eq('id',UID).then(r=>{if(!r.error)return;const er=r.error;if(/city/i.test(er.message||'')||er.code=='42703'||er.code=='PGRST204'){sb.from('profiles').update(base).eq('id',UID).then(r2=>{if(r2.error)toast('Не удалось сохранить интересы')});return}toast('Не удалось сохранить интересы')})}
 async function loadProfile(uid){let r=await sb.from('profiles').select('public_id,name,role,interests,city').eq('id',uid).single();if(r.error&&(/city/i.test(r.error.message||'')||r.error.code=='42703'))r=await sb.from('profiles').select('public_id,name,role,interests').eq('id',uid).single();return r}
@@ -453,7 +500,7 @@ const{error}=await sb.from('locations').upsert({user_id:UID,place:v||null,status
 if(error)return toast('Не удалось обновить место');MYLOC=v;toast(v?'Друзья видят, где вы':'Вы скрыли своё место')}
 async function addFc(id,er){const b=$('#fb');b.disabled=true;const{data,error}=await sb.rpc('send_friend_request',{target:id});
 const M={sent:'Запрос отправлен. Друг увидит его в своём списке',accepted:'Вы теперь друзья',exists:'Этот друг уже добавлен',exists_pending:'Запрос уже отправлен, ждём ответа',not_found:'Пользователь с таким ID не найден',self:'Это ваш собственный ID',rate_limited:'Слишком много попыток. Подождите около часа',invalid:'ID состоит из 8 цифр'};
-if(error){b.disabled=false;return er('Не удалось отправить запрос. Попробуйте позже')}
+if(error){console.error('send_friend_request',error);b.disabled=false;return er('Не удалось отправить запрос: '+(error.message||error.code||'ошибка')+'. Попробуйте позже')}
 if(data=='sent'||data=='accepted'){toast(M[data]);const i=$('#fi');i.value='';i.blur();return loadFriends()}
 b.disabled=false;er(M[data]||'Не удалось добавить')}
 async function respF(rid,ok){const{error}=await sb.rpc('respond_friend_request',{req:rid,accept:ok});if(error)return toast('Не удалось выполнить');toast(ok?'Друг добавлен':'Запрос отклонён');loadFriends()}
