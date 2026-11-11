@@ -419,6 +419,8 @@ const SB_KEY='sb_publishable_1z0EmyPl6TzkpyMQ61GrYQ_Ig0B5fA8';
 let sb=null;try{if(SB_URL&&SB_KEY&&window.supabase)sb=window.supabase.createClient(SB_URL,SB_KEY)}catch(e){}
 const CLOUD=!!sb;
 let UID=null,PNAME='',MYLOC='',LASTDAY='',FSIG='',POLL=null,LOADING=false,AUTHR=false;
+let SHARE=false,LASTPUSH=0,LASTPT=null,ACCV=0,PUSHERR=false;
+const FRESH=15*60000,SHK=()=>'qala_share_'+UID;
 const AUTH={mode:'in',msg:'',busy:false};
 let RECOV=false;
 if(/error_code=otp_expired|error=access_denied/.test(location.hash)){AUTH.mode='reset';AUTH.msg='Ссылка недействительна или устарела. Запросите новую.'}
@@ -494,7 +496,7 @@ if(data.session)ok=true;else{AUTH.mode='in';AUTH.msg='Мы отправили п
 else{const{error}=await sb.auth.signInWithPassword({email:em,password:pw,options:{captchaToken:tok}});if(error)throw error;ok=true}}
 catch(e){AUTH.msg=errRu(e)}
 AUTH.busy=false;if(ok)return;au();const f=$('#ae');if(f)f.value=em}
-function outAll(){UID=null;clearInterval(POLL);Object.assign(S,{home:'',city:'astana',nm:null,ready:false,fav:[],tk:[],fr:[],sg:[],inc:[],out:[],day:{},att:0,sel:null,tab:'map'});P.res=null;LASTDAY='';FSIG='';MYLOC='';R();ob();au()}
+function outAll(){UID=null;clearInterval(POLL);Object.assign(S,{home:'',city:'astana',nm:null,ready:false,fav:[],tk:[],fr:[],sg:[],inc:[],out:[],day:{},att:0,sel:null,tab:'map'});P.res=null;LASTDAY='';FSIG='';MYLOC='';SHARE=false;LASTPUSH=0;LASTPT=null;R();ob();au()}
 async function loadAll(user){LOADING=true;const uid=user.id;
 try{const[pr,fv,tk,dp,lc]=await Promise.all([
 loadProfile(uid),
@@ -507,6 +509,7 @@ const ints=(pr.data.interests||[]).filter(k=>CAT[k]);S.ints=new Set(ints.length?
 S.fav=(fv.data||[]).map(x=>x.key);S.tk=(tk.data||[]).map(x=>({id:x.event_id,q:x.qty,code:x.code}));
 const pl=(dp.data&&dp.data.plans)||{};S.day={};Object.keys(pl).forEach(k=>{if(Array.isArray(pl[k]))S.day[k]=pl[k].filter(i=>i&&(i.k=='p'||i.k=='e')&&obj(i))});
 S.att=(dp.data&&dp.data.att)||0;LASTDAY=JSON.stringify([S.day,S.att]);MYLOC=lc.data&&lc.data.place||'';
+try{SHARE=localStorage.getItem('qala_share_'+uid)=='1'}catch(e){SHARE=false}LASTPUSH=0;LASTPT=null;if(SHARE&&MAP&&WATCH===null)locate(false);
 S.sel=null;S.tab='map';await fetchFriends();
 clearInterval(POLL);POLL=setInterval(()=>{if(document.visibilityState=='visible')loadFriends()},20000);
 au();ob();R()}
@@ -521,23 +524,45 @@ async function rename(){const v=(prompt('Ваше имя',PNAME)||'').trim().sli
 PNAME=v;toast('Имя обновлено');R()}
 function syncDay(){if(!CLOUD||!UID)return;const j=JSON.stringify([S.day,S.att]);if(j===LASTDAY)return;LASTDAY=j;clearTimeout(syncDay.h);
 syncDay.h=setTimeout(()=>{sb.from('day_plans').upsert({user_id:UID,plans:S.day,att:S.att,updated_at:new Date().toISOString()}).then(r=>{if(r.error)toast('Не удалось сохранить план дня')})},800)}
+async function getLoc(ids){let r=await sb.from('locations').select('user_id,lat,lng,acc,updated_at').in('user_id',ids);
+if(r.error&&(r.error.code=='42703'||/column/i.test(r.error.message||'')))r=await sb.from('locations').select('user_id').in('user_id',ids);return r}
 async function fetchFriends(){
 const fs=await sb.from('friendships').select('id,requester,addressee,addressee_pid,status');if(fs.error)return false;
 const rows=fs.data||[],oth=r=>r.requester==UID?r.addressee:r.requester,ids=rows.map(oth),pm={},lm={};
-if(ids.length){const[p,l]=await Promise.all([sb.from('profiles').select('id,public_id,name').in('id',ids),sb.from('locations').select('user_id,place,status').in('user_id',ids)]);
+if(ids.length){const[p,l]=await Promise.all([sb.from('profiles').select('id,public_id,name').in('id',ids),getLoc(ids)]);
 if(p.error||l.error)return false;(p.data||[]).forEach(x=>pm[x.id]=x);(l.data||[]).forEach(x=>lm[x.user_id]=x)}
 const fr=[],inc=[],out=[];
 rows.forEach(r=>{const o=oth(r),pf=pm[o];
-if(r.status=='accepted'){if(pf){const lc=lm[o];fr.push({uid:o,id:pf.public_id,n:pf.name,p:lc&&PL.some(x=>x.id==lc.place)?lc.place:null,s:lc&&lc.status||''})}}
+if(r.status=='accepted'){if(pf){const lc=lm[o],t=lc&&lc.updated_at?Date.parse(lc.updated_at):0,ok=!!(lc&&lc.lat!=null&&lc.lng!=null&&Date.now()-t<=FRESH);fr.push({uid:o,id:pf.public_id,n:pf.name,p:null,s:'',lat:ok?lc.lat:null,lng:ok?lc.lng:null,acc:ok?lc.acc:null,t:ok?t:0})}}
 else if(r.addressee==UID){if(pf)inc.push({rid:r.id,id:pf.public_id,n:pf.name})}
 else out.push({uid:o,rid:r.id,id:r.addressee_pid})});
 fr.sort((a,b)=>a.n.localeCompare(b.n,'ru'));
-const sig=JSON.stringify([fr,inc,out]);S.fr=fr;S.inc=inc;S.out=out;const ch=sig!==FSIG;FSIG=sig;return ch}
+const sig=JSON.stringify([fr.map(f=>({...f,t:0})),inc,out]);S.fr=fr;S.inc=inc;S.out=out;const ch=sig!==FSIG;FSIG=sig;return ch}
 async function loadFriends(){const ch=await fetchFriends();if(!ch||!UID||!(S.tab=='friends'||S.tab=='map'))return;
 const t=document.activeElement&&document.activeElement.tagName;if(t=='INPUT'||t=='SELECT'||t=='TEXTAREA'){FSIG='';return}R()}
-async function setMyLoc(v){if(v&&!PL.some(p=>p.id==v))return;
-const{error}=await sb.from('locations').upsert({user_id:UID,place:v||null,status:v?'сейчас здесь':null,updated_at:new Date().toISOString()});
-if(error)return toast('Не удалось обновить место');MYLOC=v;toast(v?'Друзья видят, где вы':'Вы скрыли своё место')}
+const ago=t=>{const m=Math.round((Date.now()-t)/60000);return m<1?'только что':m<60?m+' мин назад':'давно'};
+const fmtKm=d=>d<1?Math.max(10,Math.round(d*100)*10)+' м':d.toFixed(1)+' км';
+function nearPl(la,ln){let b=null,bd=.3;PL.forEach(p=>{const d=km({lat:la,lng:ln},p);if(d<bd){bd=d;b=p}});return b}
+function friendInfo(f){if(f.lat==null)return' · место скрыто';let r=' · '+ago(f.t);const np=nearPl(f.lat,f.lng);if(np)r+=' · рядом: '+esc(np.n);if(USER)r+=' · '+fmtKm(km({lat:USER[0],lng:USER[1]},{lat:f.lat,lng:f.lng}))+' от вас';return r}
+async function pushLoc(c,force){if(!CLOUD||!UID||!SHARE)return;const now=Date.now(),pt=[c.latitude,c.longitude],moved=LASTPT?km({lat:LASTPT[0],lng:LASTPT[1]},{lat:pt[0],lng:pt[1]})*1000:1e9;
+if(!force){if(now-LASTPUSH<30000)return;if(moved<20&&now-LASTPUSH<120000)return}
+LASTPUSH=now;LASTPT=pt;
+const{error}=await sb.from('locations').upsert({user_id:UID,lat:+pt[0].toFixed(6),lng:+pt[1].toFixed(6),acc:Math.round(c.accuracy||0),place:null,status:null,updated_at:new Date().toISOString()});
+if(!error){PUSHERR=false;return}
+console.error('locations',error);const miss=error.code=='42703'||error.code=='PGRST204'||/column/i.test(error.message||'');
+if(miss){SHARE=false;try{localStorage.setItem(SHK(),'0')}catch(e){}toast('Обновите базу: выполните supabase_live_location.sql в Supabase');if(S.tab=='friends')R();return}
+if(!PUSHERR){PUSHERR=true;toast('Не удалось передать местоположение друзьям')}}
+async function setShare(on){if(!CLOUD||!UID)return toast('Войдите в аккаунт');
+if(on){if(!navigator.geolocation)return toast('Этот браузер не поддерживает геолокацию');if(!MAP)return toast('Сначала откройте вкладку «Карта»');
+SHARE=true;LASTPUSH=0;LASTPT=null;PUSHERR=false;try{localStorage.setItem(SHK(),'1')}catch(e){}
+if(WATCH===null)locate(false);else if(USER)pushLoc({latitude:USER[0],longitude:USER[1],accuracy:ACCV},true);
+toast('Друзья видят вашу точку, пока сайт открыт');R();return}
+SHARE=false;try{localStorage.setItem(SHK(),'0')}catch(e){}
+const{error}=await sb.from('locations').upsert({user_id:UID,lat:null,lng:null,acc:null,place:null,status:null,updated_at:new Date().toISOString()});
+toast(error?'Не удалось выключить. Попробуйте ещё раз':'Вы скрыли своё местоположение');R()}
+function seeFriend(uid){const f=S.fr.find(x=>x.uid==uid);if(!f||f.lat==null)return;S.tab='map';S.lf=true;S.sel=null;R();if(MAP)MAP.flyTo([f.lat,f.lng],16)}
+async function signOutQ(){if(SHARE&&UID){SHARE=false;try{localStorage.setItem(SHK(),'0')}catch(e){}try{await sb.from('locations').upsert({user_id:UID,lat:null,lng:null,acc:null,place:null,status:null})}catch(e){}}sb.auth.signOut()}
+setInterval(()=>{if(SHARE&&USER&&document.visibilityState=='visible')pushLoc({latitude:USER[0],longitude:USER[1],accuracy:ACCV})},45000);
 async function addFc(id,er){const b=$('#fb');b.disabled=true;const{data,error}=await sb.rpc('send_friend_request',{target:id});
 const M={sent:'Запрос отправлен. Друг увидит его в своём списке',accepted:'Вы теперь друзья',exists:'Этот друг уже добавлен',exists_pending:'Запрос уже отправлен, ждём ответа',not_found:'Пользователь с таким ID не найден',self:'Это ваш собственный ID',rate_limited:'Слишком много попыток. Подождите около часа',invalid:'ID состоит из 8 цифр'};
 if(error){console.error('send_friend_request',error);b.disabled=false;return er('Не удалось отправить запрос: '+(error.message||error.code||'ошибка')+'. Попробуйте позже')}
@@ -546,12 +571,12 @@ b.disabled=false;er(M[data]||'Не удалось добавить')}
 async function respF(rid,ok){const{error}=await sb.rpc('respond_friend_request',{req:rid,accept:ok});if(error)return toast('Не удалось выполнить');toast(ok?'Друг добавлен':'Запрос отклонён');loadFriends()}
 async function cancelF(i){const o=S.out[i];if(!o)return;const{error}=await sb.rpc('remove_friend',{other:o.uid});if(error)return toast('Не удалось отменить');toast('Запрос отменён');loadFriends()}
 function friendsCloud(){
-const loc='<option value="">Не показывать друзьям</option>'+plOpts(MYLOC);
+const shr=`<div class="shr"><div class="row" style="margin-top:14px"><button class="chip ${SHARE?'on':''}" onclick="setShare(${!SHARE})">${SHARE?'Вы делитесь местоположением':'Делиться моим местоположением'}</button></div><p class="mut" style="font-size:12px;margin-top:8px;max-width:560px">${SHARE?(USER?'Друзья видят вашу точку на карте и обновление примерно каждые 30 секунд, пока сайт открыт. Нажмите ещё раз, чтобы скрыть.':'Определяем ваше местоположение…'):'Включите, и друзья из вашего списка увидят вашу точку по GPS. Видно только тем, кто принял ваш запрос. Работает, пока сайт открыт: через 15 минут после закрытия точка пропадает. Отключить можно в любой момент.'}</p></div>`;
 const inc=S.inc.length?`<h2 style="margin-top:26px">Запросы в друзья</h2><div class="list">${S.inc.map(r=>`<div class="ev fr"><div class="fm" style="background:var(--mut)">${esc(ini(r.n))}</div><div><b>${esc(r.n)}</b><div class="mut" style="font-size:12px">ID ${fId(String(r.id))}</div></div><div class="row"><button class="btn sm" onclick="respF(${Number(r.rid)},true)">Принять</button><button class="btn sm ghost" onclick="respF(${Number(r.rid)},false)">Отклонить</button></div></div>`).join('')}</div>`:'';
-const fr=S.fr.map((f,i)=>`<div class="ev fr"><div class="fm">${esc(ini(f.n))}</div><div><b>${esc(f.n)}</b>${f.s?`<span class="mut"> · ${esc(f.s)}</span>`:''}<div class="mut" style="font-size:12px">ID ${fId(String(f.id))}${f.p?' · '+esc(PL.find(x=>x.id==f.p).n):' · место скрыто'}</div></div><div class="row">${f.p?`<button class="btn sm" onclick="seeF('${f.p}')">На карте</button><button class="btn sm gold" onclick="addP('${f.p}')">Пойти туда</button>`:''}<button class="btn sm ghost" aria-label="Удалить из друзей" onclick="delF(${i})">×</button></div></div>`).join('')||'<div class="card mut">Друзей пока нет. Добавьте первого по ID ниже.</div>';
+const fr=S.fr.map((f,i)=>`<div class="ev fr"><div class="fm">${esc(ini(f.n))}</div><div><b>${esc(f.n)}</b>${f.s?`<span class="mut"> · ${esc(f.s)}</span>`:''}<div class="mut" style="font-size:12px">ID ${fId(String(f.id))}${friendInfo(f)}</div></div><div class="row">${f.lat!=null?`<button class="btn sm" onclick="seeFriend('${f.uid}')">На карте</button>`:''}<button class="btn sm ghost" aria-label="Удалить из друзей" onclick="delF(${i})">×</button></div></div>`).join('')||'<div class="card mut">Друзей пока нет. Добавьте первого по ID ниже.</div>';
 const out=S.out.length?`<h2 style="margin-top:26px">Ждут ответа</h2><div class="list">${S.out.map((o,i)=>`<div class="ev fr"><div class="fm" style="background:var(--mut)">?</div><div><b>ID ${fId(String(o.id))}</b><div class="mut" style="font-size:12px">Запрос отправлен</div></div><button class="btn sm ghost" onclick="cancelF(${i})">Отменить</button></div>`).join('')}</div>`:'';
 return`<div class="page" style="max-width:860px"><h1>Друзья</h1><p class="mut" style="margin-top:6px">Друзья видят ваше место только после того, как примут ваш запрос.</p>
-<div class="card" style="margin-top:16px;max-width:760px"><h2>Ваш ID</h2><div class="myid" style="margin-top:8px"><b>${fId(MYID)}</b><button class="btn sm ghost" onclick="copyId()">Копировать</button></div><label class="fld" style="margin-top:14px">Где вы сейчас<select class="sel" onchange="setMyLoc(this.value)">${loc}</select></label></div>
+<div class="card" style="margin-top:16px;max-width:760px"><h2>Ваш ID</h2><div class="myid" style="margin-top:8px"><b>${fId(MYID)}</b><button class="btn sm ghost" onclick="copyId()">Копировать</button></div>${shr}</div>
 ${inc}<h2 style="margin-top:26px">Друзья</h2><div class="list">${fr}</div>${out}
 <div class="card" style="margin-top:22px;max-width:760px"><h2>Добавить друга по ID</h2><div class="addf"><label class="fld">8-значный ID друга<input class="search" id="fi" inputmode="numeric" maxlength="9" placeholder="0000 0000" autocomplete="off" oninput="fmtId(this)" onkeydown="if(event.key=='Enter'&&!$('#fb').disabled)addF()"></label><button class="btn add" id="fb" disabled onclick="addF()">${PLUS}Добавить</button></div><div id="ferr" class="perr" role="alert"></div></div></div>`}
 const sv=()=>{if(CLOUD)return;try{localStorage.setItem('qala_fr',JSON.stringify({fr:S.fr,sg:S.sg,fav:S.fav,tk:S.tk}))}catch(e){}};
@@ -626,10 +651,10 @@ LAY=L.layerGroup().addTo(MAP);MAP.on('zoomend',marks);locate(false)}
 function locate(center){if(!navigator.geolocation)return toast('Этот браузер не поддерживает геолокацию');if(!MAP)return;
 if(WATCH!==null){if(center&&USER)MAP.flyTo(USER,16);else if(center)toast('Определяем ваше местоположение…');return}
 if(center)toast('Определяем ваше местоположение…');
-WATCH=navigator.geolocation.watchPosition(p=>{const first=!ME;USER=[p.coords.latitude,p.coords.longitude];let chg=false;if(first&&S.role!='Житель'){const nc=nearCity();if(nc&&nc!=S.city){S.city=nc;P.res=null;chg=true}}
+WATCH=navigator.geolocation.watchPosition(p=>{const first=!ME;USER=[p.coords.latitude,p.coords.longitude];ACCV=p.coords.accuracy;if(SHARE)pushLoc(p.coords);let chg=false;if(first&&S.role!='Житель'){const nc=nearCity();if(nc&&nc!=S.city){S.city=nc;P.res=null;chg=true}}
 if(first){ME=L.marker(USER,{icon:L.divIcon({className:'',html:'<div class="me-dot"></div>',iconSize:[20,20]}),zIndexOffset:1000,interactive:false}).addTo(MAP);ACC=L.circle(USER,{radius:p.coords.accuracy,color:'#2A7BFF',weight:1,fillOpacity:.1,interactive:false}).addTo(MAP);MAP.flyTo(USER,15)}
-else{ME.setLatLng(USER);ACC.setLatLng(USER).setRadius(p.coords.accuracy)}setAway();if(chg)R()},
-e=>{navigator.geolocation.clearWatch(WATCH);WATCH=null;toast(e.code==1?'Разрешите доступ к геолокации в настройках браузера':'Не удалось определить местоположение')},{enableHighAccuracy:true,maximumAge:5000,timeout:20000})}
+else{ME.setLatLng(USER);ACC.setLatLng(USER).setRadius(p.coords.accuracy)}setAway();if(chg||(first&&SHARE&&S.tab=='friends'))R()},
+e=>{navigator.geolocation.clearWatch(WATCH);WATCH=null;if(SHARE&&e.code==1){SHARE=false;try{localStorage.setItem(SHK(),'0')}catch(x){}if(S.tab=='friends')R()}toast(e.code==1?'Разрешите доступ к геолокации в настройках браузера':'Не удалось определить местоположение')},{enableHighAccuracy:true,maximumAge:5000,timeout:20000})}
 function setAway(){const el=$('#away'),p=PL.find(x=>x.id==S.sel);if(!el||!p||!USER)return;el.textContent=`${km({lat:USER[0],lng:USER[1]},p).toFixed(1)} км от вас`}
 function marks(){if(!MAP)return;LAY.clearLayers();
 if(MAP.getZoom()<9){CITIES.forEach(c=>{const n=EV.filter(e=>e.d==S.date&&e.city==c.id).length;
@@ -639,7 +664,7 @@ PL.forEach(p=>{const dim=q&&!p.n.toLowerCase().includes(q),n=EV.filter(e=>e.d==S
 const html=`<div class="mk ${S.sel==p.id?'on':''} ${sp?'':'evonly'} ${dim?'dim':''}" style="--c:${COL[p.c]}"></div>`;
 const m=L.marker([p.lat,p.lng],{icon:L.divIcon({className:'',html,iconSize:[26,26],iconAnchor:[13,13]}),title:p.n}).addTo(LAY);
 m.on('click',()=>pick(p.id));m.bindTooltip(p.n,{direction:'bottom',offset:[0,18]})});
-if(S.lf){const cnt={};S.fr.forEach(f=>{const p=PL.find(x=>x.id==f.p);if(!p)return;const k=cnt[f.p]=(cnt[f.p]||0)+1,y=40+(k-1)*36;
+if(S.lf){S.fr.forEach(f=>{if(f.lat==null)return;L.marker([f.lat,f.lng],{icon:L.divIcon({className:'',html:`<div class="fm">${esc(f.n[0].toUpperCase())}</div>`,iconSize:[32,32],iconAnchor:[16,16],tooltipAnchor:[18,0]}),zIndexOffset:600,title:f.n}).addTo(LAY).bindTooltip(esc(f.n),{permanent:true,direction:'right',className:'fl'})});const cnt={};S.fr.forEach(f=>{const p=PL.find(x=>x.id==f.p);if(!p)return;const k=cnt[f.p]=(cnt[f.p]||0)+1,y=40+(k-1)*36;
 const m=L.marker([p.lat,p.lng],{icon:L.divIcon({className:'',html:`<div class="fm">${esc(f.n[0].toUpperCase())}</div>`,iconSize:[32,32],iconAnchor:[-22,y],tooltipAnchor:[58,16-y]}),zIndexOffset:500,title:f.n}).addTo(LAY);
 m.bindTooltip(esc(f.n),{permanent:true,direction:'right',className:'fl'});m.on('click',()=>pick(f.p))})}}
 function pick(id){const p=PL.find(x=>x.id==id);if(p&&p.city!=S.city){S.city=p.city;P.res=null}S.sel=id;R();if(MAP&&p){if(MAP.getZoom()<9)MAP.flyTo([p.lat,p.lng],14);else MAP.panTo([p.lat,p.lng])}}
@@ -808,7 +833,7 @@ ${S.role=='Житель'?`<label class="fld" style="margin-top:14px;max-width:32
 <h2>Значки</h2><div class="badges">${bd.map(b=>`<div class="bd ${b.ok?'':'lock'}"><b>${b.n}</b><span class="mut">${b.ok?'получен':b.h}</span></div>`).join('')}</div>
 ${nx?`<div class="card" style="margin-top:14px"><b>Следующий значок: ${nx.n}</b><div class="mut">${nx.h}</div><div class="bar"><i style="width:${bd.filter(b=>b.ok).length/bd.length*100}%"></i></div></div>`:''}
 <h2 style="margin-top:26px">Интересы</h2><div class="row" style="margin-top:12px">${Object.entries(CAT).map(([k,[n,e]])=>`<button class="chip ${S.ints.has(k)?'on':''}" onclick="tg(S.ints,'${k}');P.ints=new Set(S.ints);saveProf();R()">${e} ${n}</button>`).join('')}</div>
-<div class="row" style="margin-top:26px"><button class="btn ghost" onclick="rename()">Изменить имя</button>${CLOUD?'<button class="btn ghost" onclick="sb.auth.signOut()">Выйти</button>':''}<button class="btn ghost" onclick="S.ready=false;ob()">Пройти знакомство заново</button></div><p class="mut" style="margin-top:28px;font-size:12px">Карта: © участники <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener" style="color:inherit">OpenStreetMap</a></p></div>`}
+<div class="row" style="margin-top:26px"><button class="btn ghost" onclick="rename()">Изменить имя</button>${CLOUD?'<button class="btn ghost" onclick="signOutQ()">Выйти</button>':''}<button class="btn ghost" onclick="S.ready=false;ob()">Пройти знакомство заново</button></div><p class="mut" style="margin-top:28px;font-size:12px">Карта: © участники <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener" style="color:inherit">OpenStreetMap</a></p></div>`}
 function th(){const r=document.documentElement,d=matchMedia('(prefers-color-scheme: dark)').matches;const cur=r.dataset.theme||(d?'dark':'light');r.dataset.theme=cur=='dark'?'light':'dark'}
 function R(){nav();const m=S.tab=='map';$('#lm').style.display=m?'block':'none';MQ=[];$('#ui').innerHTML={map:mapPage,events,day,favs,tickets,friends,me}[S.tab]();drawMini();if(m){ensureMap();marks();setAway();if(MAP)setTimeout(()=>MAP.invalidateSize(),0)}syncDay()}
 
