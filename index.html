@@ -378,6 +378,8 @@ let sb=null;try{if(SB_URL&&SB_KEY&&window.supabase)sb=window.supabase.createClie
 const CLOUD=!!sb;
 let UID=null,PNAME='',MYLOC='',LASTDAY='',FSIG='',POLL=null,LOADING=false,AUTHR=false;
 const AUTH={mode:'in',msg:'',busy:false};
+/* адрес, на который Supabase вернёт человека после подтверждения почты: страница, где он зарегистрировался (с папкой репозитория, без #… и ?…) */
+const backUrl=()=>location.href.split('#')[0].split('?')[0].replace(/index\.html$/,'');
 S.inc=[];S.out=[];
 if(!CLOUD)try{const n=localStorage.getItem('qala_name');if(n)PNAME=n.slice(0,30);const h=localStorage.getItem('qala_home');if(CITIES.some(c=>c.id==h)){S.home=h;S.city=h;S.role='Житель'}}catch(e){}
 const nmv=()=>S.nm!=null?S.nm:PNAME;
@@ -400,7 +402,7 @@ ${up?'<label class="fld">Имя<input class="search" id="an" maxlength="30" auto
 <button type="button" class="btn ghost" onclick="AUTH.mode='${up?'in':'up'}';AUTH.msg='';au()">${up?'У меня уже есть аккаунт':'Создать аккаунт'}</button></form>`}
 async function authGo(ev){ev.preventDefault();if(AUTH.busy)return;
 const em=$('#ae').value.trim(),pw=$('#ap').value,nm=$('#an')?$('#an').value.trim():'';AUTH.busy=true;AUTH.msg='';let ok=false;
-try{if(AUTH.mode=='up'){const{data,error}=await sb.auth.signUp({email:em,password:pw,options:{data:{name:nm}}});if(error)throw error;
+try{if(AUTH.mode=='up'){const{data,error}=await sb.auth.signUp({email:em,password:pw,options:{data:{name:nm},emailRedirectTo:backUrl()}});if(error)throw error;
 if(data.session)ok=true;else{AUTH.mode='in';AUTH.msg='Мы отправили письмо. Подтвердите почту и войдите.'}}
 else{const{error}=await sb.auth.signInWithPassword({email:em,password:pw});if(error)throw error;ok=true}}
 catch(e){AUTH.msg=errRu(e)}
